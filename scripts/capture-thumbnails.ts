@@ -144,7 +144,8 @@ async function main() {
     const open = async (
       urlPath: string,
       theme: "light" | "dark",
-      options: BrowserContextOptions
+      options: BrowserContextOptions,
+      delayMs = args.delay
     ) => {
       const context = await browser!.newContext({ colorScheme: theme, ...options });
       await context.addCookies([{ name: SESSION_COOKIE, value: token, url: base }]);
@@ -156,18 +157,33 @@ async function main() {
       const page = await context.newPage();
       const res = await page.goto(`${base}${urlPath}`, { waitUntil: "networkidle" });
       if (!res || res.status() >= 400) throw new Error(`${urlPath} returned ${res?.status()}`);
-      await page.waitForTimeout(args.delay);
+      await page.waitForTimeout(delayMs);
       return { context, page };
     };
 
+    // A prototype can request a longer settle time with "thumbnailDelay" in metadata.json
+    // (e.g. heavy WebGL first paints). An explicit --delay flag always wins.
+    const delayFor = (slug: string) => {
+      if (process.argv.includes("--delay")) return args.delay;
+      try {
+        const meta = JSON.parse(
+          fs.readFileSync(path.join(ROOT, "app", "prototypes", slug, "metadata.json"), "utf8")
+        );
+        return typeof meta.thumbnailDelay === "number" ? Math.max(args.delay, meta.thumbnailDelay) : args.delay;
+      } catch {
+        return args.delay;
+      }
+    };
+
     for (const t of targets) {
+      const delayMs = delayFor(t.slug);
       for (const theme of ["light", "dark"] as const) {
         // 1280×800 CSS px at 2× DPR → 2560×1600, downscaled to a crisp 1280×800 JPEG
         // (with ffmpeg) or saved at full 2× resolution as a fallback.
         const { context, page } = await open(`/prototypes/${t.slug}`, theme, {
           viewport: { width: 1280, height: 800 },
           deviceScaleFactor: 2,
-        });
+        }, delayMs);
         const file = path.join(THUMBS, `${t.slug}-${theme}.jpg`);
         if (ffmpeg) {
           const raw = path.join(TMP, `${t.slug}-${theme}.png`);
@@ -185,7 +201,7 @@ async function main() {
         const { context, page } = await open(`/p/${t.slug}`, "dark", {
           viewport: { width: 1200, height: 630 },
           deviceScaleFactor: 2,
-        });
+        }, delayMs);
         if (ffmpeg) {
           const raw = path.join(TMP, `${t.slug}-og.png`);
           await page.screenshot({ path: raw, type: "png" });
@@ -206,7 +222,7 @@ async function main() {
         const rec = await open(`/p/${t.slug}`, "dark", {
           viewport: { width: 1200, height: 630 },
           recordVideo: { dir: videoDir, size: { width: 1200, height: 630 } },
-        });
+        }, delayMs);
         await rec.page.waitForTimeout(6000);
         const video = rec.page.video();
         await rec.context.close();

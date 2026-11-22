@@ -5,5 +5,6 @@
   "createdAt": "2026-11-22",
   "updatedAt": "2026-11-22T02:18:45Z",
   "hidden": false,
-  "public": false
+  "public": false,
+  "thumbnailDelay": 8000
 }

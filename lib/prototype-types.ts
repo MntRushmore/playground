@@ -9,6 +9,8 @@ export type RawMetadata = {
   updatedAt: string;
   hidden?: boolean;
   public?: boolean;
+  /** Optional ms to wait before capturing thumbnails (heavy first paints). Default 2000. */
+  thumbnailDelay?: number;
 };
 
 export type RegistryEntry = {

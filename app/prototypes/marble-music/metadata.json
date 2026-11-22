@@ -1,0 +1,9 @@
+{
+  "title": "Marble Music",
+  "description": "A generative marble machine where every bounce off a tuned bar plays a note.",
+  "tags": ["music", "physics", "generative", "canvas"],
+  "createdAt": "2026-11-22",
+  "updatedAt": "2026-11-22T01:24:27Z",
+  "hidden": false,
+  "public": false
+}

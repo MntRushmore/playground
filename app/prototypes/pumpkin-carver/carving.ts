@@ -1,106 +1,86 @@
 // Carving ops → pixels, plus stroke helpers. No React; canvas contexts come in as args.
 
-import { STAMPS } from "./data";
-import type { Op, StampDef, StampId, StampOp, StrokeOp } from "./types";
+import { FACES } from "./faces";
+import { shapePaths } from "./shapes";
+import type { Op, PaintOp, StampOp, StrokeOp } from "./types";
 
-/** Ops after the most recent clear: the carving that's actually visible. */
-export function visibleOps(ops: readonly Op[]): (StrokeOp | StampOp)[] {
-  let start = 0;
-  for (let i = ops.length - 1; i >= 0; i--) {
-    if (ops[i].t === "clear") {
-      start = i + 1;
-      break;
-    }
+/** What's actually on the pumpkin: ops after the last clear, with faces expanded. */
+export function visibleOps(ops: readonly Op[]): PaintOp[] {
+  let out: PaintOp[] = [];
+  for (const op of ops) {
+    if (op.t === "clear") out = [];
+    else if (op.t === "face") out = [...FACES[op.f].ops];
+    else out.push(op);
   }
-  return ops.slice(start).filter((op): op is StrokeOp | StampOp => op.t !== "clear");
+  return out;
 }
 
-const isHanded = (id: StampId) => (STAMPS[id] as StampDef).handed === true;
+/** Stable small hash for seeding a shape's chisel marks from where it sits. */
+const seedOf = (op: StampOp) =>
+  (Math.round(op.x * 1000) * 73856093) ^ (Math.round(op.y * 1000) * 19349663) ^ op.s.length * 83492791;
 
-const pathCache = new Map<StampId, Path2D>();
-export function stampPath(id: StampId) {
-  let p = pathCache.get(id);
-  if (!p) {
-    p = new Path2D(STAMPS[id].path);
-    pathCache.set(id, p);
-  }
-  return p;
-}
+/** Deterministic 0–1 noise per stroke segment (stable while a stroke grows). */
+const hash01 = (i: number, salt: number) => {
+  const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
 
-/** Smooth path through the points: quadratic curves between midpoints. */
-export function traceStroke(ctx: CanvasRenderingContext2D, p: readonly number[]) {
-  ctx.beginPath();
+/**
+ * A knife stroke: short segments whose width wavers, so the edge looks cut by hand
+ * rather than drawn with a marker. Round caps keep the joins solid.
+ */
+function traceKnife(ctx: CanvasRenderingContext2D, op: StrokeOp) {
+  const p = op.p;
   const n = p.length / 2;
-  ctx.moveTo(p[0], p[1]);
-  if (n === 1) {
-    ctx.lineTo(p[0] + 1e-4, p[1]);
-    return;
-  }
-  for (let i = 1; i < n - 1; i++) {
-    const x = p[i * 2];
-    const y = p[i * 2 + 1];
-    ctx.quadraticCurveTo(x, y, (x + p[i * 2 + 2]) / 2, (y + p[i * 2 + 3]) / 2);
-  }
-  ctx.lineTo(p[(n - 1) * 2], p[(n - 1) * 2 + 1]);
-}
-
-/** Draws a stroke in face units (the face transform must already be set). */
-export function drawStroke(ctx: CanvasRenderingContext2D, op: StrokeOp) {
-  if (op.p.length < 2) return;
-  ctx.lineWidth = op.w;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  traceStroke(ctx, op.p);
-  ctx.stroke();
-  if (op.m) {
-    ctx.save();
-    ctx.scale(-1, 1);
-    traceStroke(ctx, op.p);
+  if (n === 1) {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], op.w / 2, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  const salt = Math.round((p[0] + p[1]) * 1000);
+  const wobble = op.t === "cut" ? 0.38 : 0.2;
+  for (let i = 0; i < n - 1; i++) {
+    ctx.lineWidth = op.w * (1 - wobble / 2 + wobble * hash01(i, salt));
+    ctx.beginPath();
+    ctx.moveTo(p[i * 2], p[i * 2 + 1]);
+    ctx.lineTo(p[i * 2 + 2], p[i * 2 + 3]);
     ctx.stroke();
-    ctx.restore();
   }
 }
 
-function placeStamp(ctx: CanvasRenderingContext2D, id: StampId, x: number, y: number, k: number) {
-  const flip = isHanded(id) && x > 0.001;
+export function drawStamp(ctx: CanvasRenderingContext2D, op: StampOp) {
+  const paths = shapePaths(op.s, seedOf(op));
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(flip ? -k : k, k);
-  ctx.fill(stampPath(id));
+  ctx.translate(op.x, op.y);
+  ctx.scale(op.f ? -op.k : op.k, op.k);
+  ctx.fill(paths.outer);
+  if (paths.holes.length) {
+    ctx.globalCompositeOperation = "destination-out";
+    for (const h of paths.holes) ctx.fill(h);
+  }
   ctx.restore();
 }
 
-/** Mirrored copies only make sense away from the center line. */
-export const mirrors = (op: { m?: boolean; x: number }) => op.m && Math.abs(op.x) > 0.03;
-
-export function drawStamp(ctx: CanvasRenderingContext2D, op: StampOp) {
-  placeStamp(ctx, op.s, op.x, op.y, op.k);
-  if (mirrors(op)) placeStamp(ctx, op.s, -op.x, op.y, op.k);
-}
-
-/** Outline of a stamp (and its mirror) for the placement preview. */
-export function outlineStamp(ctx: CanvasRenderingContext2D, op: StampOp) {
-  const one = (x: number) => {
-    const flip = isHanded(op.s) && x > 0.001;
-    ctx.save();
-    ctx.translate(x, op.y);
-    ctx.scale(flip ? -op.k : op.k, op.k);
-    ctx.stroke(stampPath(op.s));
-    ctx.restore();
-  };
-  one(op.x);
-  if (mirrors(op)) one(-op.x);
-}
-
-/** Replays ops of one kind (cuts + stamps, or etches) into a mask, white on transparent. */
-export function paintOps(ctx: CanvasRenderingContext2D, ops: readonly (StrokeOp | StampOp)[], kind: "cut" | "etch") {
+/**
+ * Replays ops into a mask (white on transparent). Cuts and stamps go into the cut mask,
+ * etches into the etch mask, and patches erase from both.
+ */
+export function paintOps(ctx: CanvasRenderingContext2D, ops: readonly PaintOp[], kind: "cut" | "etch") {
   ctx.fillStyle = "#fff";
   ctx.strokeStyle = "#fff";
   for (const op of ops) {
     if (op.t === "stamp") {
       if (kind === "cut") drawStamp(ctx, op);
+    } else if (op.t === "patch") {
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      traceKnife(ctx, op);
+      ctx.restore();
     } else if (op.t === kind) {
-      drawStroke(ctx, op);
+      traceKnife(ctx, op);
     }
   }
 }

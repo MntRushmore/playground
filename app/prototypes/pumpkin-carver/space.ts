@@ -57,10 +57,11 @@ export function screenToFace(ft: FaceTransform, rect: PlateRect, sx: number, sy:
  * scene toggles at the bottom. All values in device px.
  */
 export function plateRect(width: number, height: number, dpr: number, maxPx: number): PlateRect {
-  const top = 64 * dpr;
-  const bottom = 64 * dpr;
+  // Clear of the top bar; the plate's empty lower margin may slide under the dock.
+  const top = 62 * dpr;
+  const bottom = (height > 900 * dpr ? 128 : 104) * dpr;
   // The plate has empty margins around the body, so it may overhang narrow screens a bit.
-  const avail = Math.max(120 * dpr, Math.min(width * 1.1, height - top - bottom));
+  const avail = Math.max(120 * dpr, Math.min(width * 1.12, height - top - bottom));
   const size = Math.min(avail, maxPx);
   return {
     x: Math.round((width - size) / 2),
@@ -69,7 +70,7 @@ export function plateRect(width: number, height: number, dpr: number, maxPx: num
   };
 }
 
-/** Plate-px bounding boxes of a stroke's points from index `from` (and its mirror). */
+/** Plate-px bounding box of a stroke's points from index `from`. */
 export function strokeBoxes(op: StrokeOp, from: number, ft: FaceTransform) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = from; i < op.p.length; i += 2) {
@@ -79,12 +80,12 @@ export function strokeBoxes(op: StrokeOp, from: number, ft: FaceTransform) {
     y1 = Math.max(y1, op.p[i + 1]);
   }
   if (!Number.isFinite(x0)) return [];
-  const pad = (op.w / 2) * Math.max(ft.kx, ft.ky) + 2;
+  const pad = op.w * 0.62 * Math.max(ft.kx, ft.ky) + 2; // stroke width wavers ±19%
   const box = (a: number, b: number) => ({
     x: ft.ox + a * ft.kx - pad,
     y: ft.oy + y0 * ft.ky - pad,
     w: (b - a) * ft.kx + pad * 2,
     h: (y1 - y0) * ft.ky + pad * 2,
   });
-  return op.m ? [box(x0, x1), box(-x1, -x0)] : [box(x0, x1)];
+  return [box(x0, x1)];
 }

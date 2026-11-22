@@ -1,5 +1,5 @@
 import { defineControls } from "@/lib/controls/schema";
-import type { BodyDims, Op, Rgb, StampDef } from "./types";
+import type { BodyDims, Op, Rgb, Variety } from "./types";
 
 export const SLUG = "pumpkin-carver";
 
@@ -13,7 +13,7 @@ export const EXPORT_PLATE_PX = 1500;
 /** Plate framing in world units: x ∈ [-E, E], y ∈ [-E + OY, E + OY] (y up). */
 export const PLATE = { E: 1.3, OY: 0.2 };
 /** Camera looks down at the pumpkin by this angle (radians). */
-export const ELEVATION = 0.22;
+export const ELEVATION = 0.17;
 
 /** Body half extents for the round pumpkin: face units are world units on this one. */
 export const ROUND_DIMS: BodyDims = { a: 1, b: 0.8 };
@@ -24,9 +24,11 @@ export const SHAPE_DIMS: Record<"round" | "tall" | "squat", BodyDims> = {
 };
 
 /** Wall bevel: how far the inner opening sits from the outer cut, in face units. */
-export const WALL = { shrink: 0.05, lift: 0.026, layers: 7 };
+export const WALL = { shrink: 0.1, lift: 0.055, layers: 9 };
 /** Etch is a broad scraper: this many knife widths. */
-export const ETCH_WIDTH_FACTOR = 2.4;
+export const ETCH_WIDTH_FACTOR = 2.2;
+/** Patch is a broad brush too: easy to fill a cut back in. */
+export const PATCH_WIDTH_FACTOR = 2.6;
 /** Knife width control → face units. */
 export const KNIFE_UNIT = 0.011;
 /** Candle position behind the mouth, face units. */
@@ -65,8 +67,8 @@ export const controls = defineControls({
     min: 0,
     max: 1,
     step: 0.01,
-    default: 0.55,
-    randomRange: [0.25, 0.9],
+    default: 0.75,
+    randomRange: [0.4, 1],
   },
   seed: { type: "number", label: "Variation", min: 1, max: 999, step: 1, default: 7 },
   warmth: {
@@ -94,81 +96,21 @@ export const controls = defineControls({
     min: 1,
     max: 10,
     step: 0.5,
-    default: 4.5,
+    default: 6,
     randomize: false,
-  },
-  stampSize: {
-    type: "number",
-    label: "Stamp size",
-    min: 0.6,
-    max: 1.6,
-    step: 0.05,
-    default: 1,
-    randomize: false,
-    format: (v) => `${v.toFixed(2)}×`,
   },
 });
 
-/** Stamp shapes, drawn for the viewer's left side; `handed` ones flip on the right. */
-export const STAMPS = {
-  tri: {
-    label: "Triangle eye",
-    path: "M -0.95 0.72 Q 0 0.98 0.95 0.8 Q 0.58 -0.02 0.24 -0.92 Q -0.32 -0.1 -0.95 0.72 Z",
-    size: 0.2,
-    handed: true,
-  },
-  almond: {
-    label: "Almond eye",
-    path: "M -1 0.18 Q -0.3 -1.05 1 -0.12 Q 0.15 0.95 -1 0.18 Z",
-    size: 0.19,
-    handed: true,
-  },
-  angry: {
-    label: "Angry eye",
-    path: "M -1 -0.42 L 1 0.12 Q 0.9 0.88 0.05 0.86 Q -0.92 0.8 -1 -0.42 Z",
-    size: 0.2,
-    handed: true,
-  },
-  nose: {
-    label: "Nose",
-    path: "M 0 -0.95 Q 0.42 -0.1 0.85 0.72 Q 0 0.98 -0.85 0.72 Q -0.42 -0.1 0 -0.95 Z",
-    size: 0.1,
-  },
-  grin: {
-    label: "Toothy grin",
-    path:
-      "M -1 -0.5 Q -0.72 -0.1 -0.44 -0.02 L -0.42 0.3 L -0.17 0.36 L -0.15 0.06 " +
-      "Q 0 0.09 0.15 0.06 L 0.17 0.36 L 0.42 0.3 L 0.44 -0.02 Q 0.72 -0.1 1 -0.5 " +
-      "Q 0.78 0.86 0 0.9 Q -0.78 0.86 -1 -0.5 Z",
-    size: 0.42,
-  },
-  smile: {
-    label: "Smile",
-    path: "M -1 -0.42 Q 0 0.32 1 -0.42 Q 0.66 0.9 0 0.92 Q -0.66 0.9 -1 -0.42 Z",
-    size: 0.4,
-  },
-  oh: {
-    label: "Round mouth",
-    path:
-      "M 0 -1 C 0.58 -1 0.74 -0.36 0.74 0.04 C 0.74 0.6 0.42 1 0 1 " +
-      "C -0.42 1 -0.74 0.6 -0.74 0.04 C -0.74 -0.36 -0.58 -1 0 -1 Z",
-    size: 0.16,
-  },
-} satisfies Record<string, StampDef>;
+/** First visit: a classic face, pre-carved, so the page (and the thumbnail) glows. */
+export const DEFAULT_OPS: Op[] = [{ t: "face", f: "jack" }];
 
-export const STAMP_ORDER = ["tri", "almond", "angry", "nose", "grin", "smile", "oh"] as const;
-
-/** A classic face, pre-carved so the first visit (and the gallery thumbnail) glows. */
-export const DEFAULT_OPS: Op[] = [
-  { t: "stamp", s: "tri", x: -0.36, y: -0.22, k: 0.2, m: true },
-  { t: "stamp", s: "nose", x: 0, y: -0.01, k: 0.1 },
-  { t: "stamp", s: "grin", x: 0, y: 0.31, k: 0.43 },
-  {
-    t: "etch",
-    w: 0.07,
-    p: [-0.6, -0.42, -0.5, -0.5, -0.38, -0.53, -0.26, -0.51, -0.17, -0.45],
-    m: true,
-  },
+/** Pumpkin colors offered by the swatch (content colors, applied to the controls). */
+export const SWATCHES: { label: string; variety: Variety; hue: number; css: string }[] = [
+  { label: "Classic", variety: "orange", hue: 24, css: "#e9731f" },
+  { label: "Deep", variety: "orange", hue: 14, css: "#c9471a" },
+  { label: "Golden", variety: "orange", hue: 34, css: "#eda233" },
+  { label: "Ghost", variety: "ghost", hue: 24, css: "#e8e1cf" },
+  { label: "Fairytale", variety: "fairytale", hue: 24, css: "#b9693f" },
 ];
 
 // ─── Content palettes (the pumpkin is content, not UI chrome) ────────────────────
@@ -208,3 +150,25 @@ export const STEM_COLORS = {
   tip: [0.1, 0.3, 0.52],
   cut: [0.11, 0.35, 0.68],
 } as const;
+
+// ─── The set: table, wall and out-of-focus pumpkins (content, not chrome) ─────────
+
+/** Weathered table planks and the board wall behind, as RGB ranges. */
+export const WOOD = {
+  table: { light: [86, 70, 58] as Rgb, dark: [34, 27, 24] as Rgb, gap: [8, 6, 6] as Rgb },
+  wall: { light: [58, 44, 36] as Rgb, dark: [22, 17, 15] as Rgb, gap: [6, 4, 4] as Rgb },
+  /** Fallen leaves and seeds scattered on the table. */
+  litter: [[168, 74, 26], [122, 52, 20], [190, 120, 48], [96, 64, 30]] as Rgb[],
+};
+
+/** Background pumpkins: world position on the table (hero at origin), scale, variety. */
+export const PROPS: { x: number; z: number; scale: number; variety: Variety; hue: number; seed: number }[] = [
+  { x: -1.75, z: -1.4, scale: 0.4, variety: "ghost", hue: 24, seed: 11 },
+  { x: 2.05, z: -1.9, scale: 0.5, variety: "orange", hue: 20, seed: 23 },
+  { x: -3.2, z: -3.4, scale: 0.62, variety: "orange", hue: 28, seed: 37 },
+  { x: 3.4, z: 0.9, scale: 0.3, variety: "fairytale", hue: 24, seed: 51 },
+  { x: -3.3, z: 1.2, scale: 0.34, variety: "ghost", hue: 24, seed: 64 },
+];
+
+/** Drifting dust / ember motes. */
+export const MOTES = { count: 46, ember: [255, 176, 82] as Rgb, dust: [190, 196, 214] as Rgb };

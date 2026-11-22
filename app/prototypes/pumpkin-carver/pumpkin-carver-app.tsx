@@ -3,25 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ControlPanel, ControlsLayout, useControls } from "@/components/controls";
-import { CarveToolbar } from "./carve-toolbar";
-import { visibleOps } from "./carving";
+import { BottomDock } from "./bottom-dock";
 import { carving, useCarving } from "./carving-store";
 import { SLUG, controls } from "./data";
 import { PumpkinCanvas, type PumpkinCanvasHandle } from "./pumpkin-canvas";
-import { saveImage } from "./save-image";
-import { SceneToggles } from "./scene-toggles";
-import type { StampId, Tool } from "./types";
+import { downloadImage, shareImage } from "./save-image";
+import { sound } from "./sound";
+import { TopBar } from "./top-bar";
+import type { FaceId, Tool, Variety } from "./types";
 
-const KEY_TOOLS: Record<string, Tool> = { k: "knife", e: "etch", s: "stamp" };
+const KEY_TOOLS: Record<string, Tool> = { k: "carve", e: "etch", p: "patch" };
 
 export function PumpkinCarverApp() {
   const c = useControls(SLUG, controls);
   const { ops, prefs } = useCarving();
-  const [tool, setTool] = useState<Tool>("knife");
-  const [stamp, setStamp] = useState<StampId>("tri");
+  const [tool, setTool] = useState<Tool>("carve");
   const [saved, setSaved] = useState(false);
+  const [carved, setCarved] = useState(false);
   const canvasRef = useRef<PumpkinCanvasHandle>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const { set: setControl } = c;
 
   useEffect(() => {
     let warned = false;
@@ -36,18 +37,51 @@ export function PumpkinCarverApp() {
     };
   }, []);
 
-  const save = useCallback(async () => {
+  // Remember the sound preference without starting audio before a gesture.
+  useEffect(() => sound.setEnabled(prefs.sound, false), [prefs.sound]);
+  // Candle crackle follows the flame (and stops when the tab is hidden).
+  useEffect(() => sound.setCrackle(prefs.lit), [prefs.lit]);
+
+  const exportImage = useCallback(async (share: boolean) => {
     const blob = await canvasRef.current?.exportPng();
     if (!blob) {
       toast.error("Couldn't create the image.");
       return;
     }
-    if (await saveImage(blob)) {
-      setSaved(true);
-      clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSaved(false), 1600);
+    if (share) {
+      await shareImage(blob);
+      return;
     }
+    downloadImage(blob);
+    setSaved(true);
+    clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSaved(false), 1600);
   }, []);
+
+  const setLit = useCallback((on: boolean) => {
+    if (on) sound.ignite();
+    else sound.snuff();
+    carving.setPref("lit", on);
+  }, []);
+  const setSound = useCallback((on: boolean) => {
+    sound.setEnabled(on);
+    carving.setPref("sound", on);
+  }, []);
+  const applyFace = useCallback((id: FaceId) => {
+    sound.thunk();
+    carving.applyFace(id);
+  }, []);
+  const pickColor = useCallback(
+    (variety: Variety, hue: number) => {
+      setControl("variety", variety);
+      setControl("hue", hue);
+    },
+    [setControl]
+  );
+  const newPumpkin = useCallback(() => {
+    carving.clear();
+    setControl("seed", 1 + Math.floor(Math.random() * 999));
+  }, [setControl]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -59,19 +93,18 @@ export function PumpkinCarverApp() {
         carving.undo();
       } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         if (KEY_TOOLS[key]) setTool(KEY_TOOLS[key]);
-        else if (key === "m") carving.setPref("mirror", !prefs.mirror);
         else if (key === "l") carving.setPref("dark", !prefs.dark);
-        else if (key === "c") carving.setPref("lit", !prefs.lit);
+        else if (key === "c") setLit(!prefs.lit);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prefs]);
+  }, [prefs, setLit]);
 
   return (
     // Bounded height: the panel scrolls instead of stretching the canvas past the fold.
     <ControlsLayout panel={<ControlPanel controls={c} />} className="max-h-[calc(100dvh-3.5rem)]">
-      <div className="relative min-h-[28rem] flex-1 overflow-hidden">
+      <div className="relative min-h-[32rem] flex-1 overflow-hidden">
         <PumpkinCanvas
           ref={canvasRef}
           settings={c.values}
@@ -80,29 +113,32 @@ export function PumpkinCarverApp() {
           lit={prefs.lit}
           dark={prefs.dark}
           tool={tool}
-          stamp={stamp}
-          mirror={prefs.mirror}
           onCommit={carving.commit}
+          onStroke={() => setCarved(true)}
         />
-        <CarveToolbar
+        <TopBar
           tool={tool}
           onTool={setTool}
-          stamp={stamp}
-          onStamp={setStamp}
-          mirror={prefs.mirror}
-          onMirror={(on) => carving.setPref("mirror", on)}
-          canUndo={ops.length > 0}
-          canClear={visibleOps(ops).length > 0}
-          onUndo={carving.undo}
-          onClear={carving.clear}
-          onSave={save}
-          saved={saved}
-        />
-        <SceneToggles
           lit={prefs.lit}
-          onLit={(on) => carving.setPref("lit", on)}
+          onLit={setLit}
           dark={prefs.dark}
           onDark={(on) => carving.setPref("dark", on)}
+        />
+        <BottomDock
+          tool={tool}
+          showHint={!carved}
+          onFace={applyFace}
+          canUndo={ops.length > 0}
+          onUndo={carving.undo}
+          onNew={newPumpkin}
+          onSave={() => exportImage(false)}
+          onExport={() => exportImage(true)}
+          saved={saved}
+          variety={c.values.variety}
+          hue={c.values.hue}
+          onColor={pickColor}
+          sound={prefs.sound}
+          onSound={setSound}
         />
       </div>
     </ControlsLayout>

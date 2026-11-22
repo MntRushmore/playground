@@ -52,6 +52,7 @@ export function renderFallbackPlates(p: PlateParams) {
   const plates = makePlateCanvases(p.size);
   paint(plates.bodyDay.getContext("2d")!, p, false, "body");
   paint(plates.bodyNight.getContext("2d")!, p, true, "body");
+  paint(plates.bodyGlow.getContext("2d")!, p, false, "body");
   paint(plates.stemDay.getContext("2d")!, p, false, "stem");
   paint(plates.stemNight.getContext("2d")!, p, true, "stem");
   return plates;

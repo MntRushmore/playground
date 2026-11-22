@@ -4,9 +4,10 @@ import { useTheme } from "next-themes";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { quantize, simplify } from "./carving";
-import { ETCH_WIDTH_FACTOR, KNIFE_UNIT, MAX_DPR, NIGHT_COLOR, STAMPS } from "./data";
+import { ETCH_WIDTH_FACTOR, KNIFE_UNIT, MAX_DPR, NIGHT_COLOR, PATCH_WIDTH_FACTOR } from "./data";
 import { type Engine, createEngine } from "./engine";
-import type { Op, Settings, StampId, StampOp, StrokeOp, Tool } from "./types";
+import { sound } from "./sound";
+import type { Op, Settings, StrokeOp, Tool } from "./types";
 import { useSheetInset } from "./use-sheet-inset";
 
 export type PumpkinCanvasHandle = { exportPng: () => Promise<Blob | null> };
@@ -19,26 +20,28 @@ type Props = {
   lit: boolean;
   dark: boolean;
   tool: Tool;
-  stamp: StampId;
-  mirror: boolean;
   onCommit: (op: Op) => void;
+  onStroke?: () => void;
   ref?: Ref<PumpkinCanvasHandle>;
 };
 
-type Drag = { id: number; op: StrokeOp | StampOp; rect: DOMRect };
+type Drag = { id: number; op: StrokeOp; rect: DOMRect; lastT: number };
 
-export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mirror, onCommit, ref }: Props) {
+const STROKE_TYPE: Record<Tool, StrokeOp["t"]> = { carve: "cut", etch: "etch", patch: "patch" };
+const WIDTH_FACTOR: Record<Tool, number> = { carve: 1, etch: ETCH_WIDTH_FACTOR, patch: PATCH_WIDTH_FACTOR };
+
+export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, onCommit, onStroke, ref }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const dragRef = useRef<Drag | null>(null);
-  const inputRef = useRef({ settings, tool, stamp, mirror, onCommit });
+  const inputRef = useRef({ settings, tool, onCommit, onStroke });
   const { resolvedTheme } = useTheme();
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
-    inputRef.current = { settings, tool, stamp, mirror, onCommit };
-  }, [settings, tool, stamp, mirror, onCommit]);
+    inputRef.current = { settings, tool, onCommit, onStroke };
+  }, [settings, tool, onCommit, onStroke]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -82,9 +85,6 @@ export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mi
       dark: isDark,
     });
   }, [resolvedTheme]);
-  useEffect(() => {
-    if (tool !== "stamp") engineRef.current?.setPreview(null);
-  }, [tool]);
 
   const onInset = useCallback((px: number) => engineRef.current?.setBottomInset(px), []);
   useSheetInset(containerRef, onInset);
@@ -96,11 +96,6 @@ export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mi
   const faceAt = (e: { clientX: number; clientY: number }, rect: DOMRect) =>
     engineRef.current?.toFace(e.clientX - rect.left, e.clientY - rect.top) ?? null;
 
-  const stampOp = (x: number, y: number): StampOp => {
-    const { stamp: s, settings: st, mirror: m } = inputRef.current;
-    return { t: "stamp", s, x, y, k: STAMPS[s].size * st.stampSize, m };
-  };
-
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     // Palm-safe: one carving pointer at a time; extra touches are ignored.
     if (dragRef.current || (e.pointerType === "mouse" && e.button !== 0)) return;
@@ -109,51 +104,37 @@ export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mi
     const at = faceAt(e, rect);
     if (!engine || !at) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    const { tool: t, settings: st, mirror: m } = inputRef.current;
-    if (t === "stamp") {
-      const op = stampOp(at[0], at[1]);
-      dragRef.current = { id: e.pointerId, op, rect };
-      engine.setPreview(op);
-    } else {
-      const w = KNIFE_UNIT * st.knife * (t === "etch" ? ETCH_WIDTH_FACTOR : 1);
-      const op: StrokeOp = { t: t === "knife" ? "cut" : "etch", w, p: [at[0], at[1]], m };
-      dragRef.current = { id: e.pointerId, op, rect };
-      engine.setLive([op]);
-    }
+    const { tool: t, settings: st } = inputRef.current;
+    const op: StrokeOp = { t: STROKE_TYPE[t], w: KNIFE_UNIT * st.knife * WIDTH_FACTOR[t], p: [at[0], at[1]] };
+    dragRef.current = { id: e.pointerId, op, rect, lastT: e.timeStamp };
+    engine.setLive([op]);
+    sound.carveStart(t);
+    inputRef.current.onStroke?.();
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     const drag = dragRef.current;
-    if (!engine) return;
-    if (!drag) {
-      // Desktop: the stamp outline follows the cursor before clicking.
-      if (inputRef.current.tool === "stamp" && e.pointerType === "mouse") {
-        const at = faceAt(e, e.currentTarget.getBoundingClientRect());
-        if (at) engine.setPreview(stampOp(at[0], at[1]));
-      }
-      return;
-    }
-    if (e.pointerId !== drag.id) return;
+    if (!engine || !drag || e.pointerId !== drag.id) return;
     const op = drag.op;
-    if (op.t === "stamp") {
-      const at = faceAt(e, drag.rect);
-      if (at) {
-        drag.op = { ...op, x: at[0], y: at[1] };
-        engine.setPreview(drag.op);
-      }
-      return;
-    }
     // Coalesced events give every sample the hardware saw between frames.
     const native = e.nativeEvent;
     const samples = typeof native.getCoalescedEvents === "function" ? native.getCoalescedEvents() : [];
     const minStep = Math.max(0.003, op.w * 0.18);
+    let moved = 0;
     for (const s of samples.length ? samples : [native]) {
       const at = faceAt(s, drag.rect);
       if (!at) continue;
       const n = op.p.length;
-      if (Math.hypot(at[0] - op.p[n - 2], at[1] - op.p[n - 1]) >= minStep) op.p.push(at[0], at[1]);
+      const d = Math.hypot(at[0] - op.p[n - 2], at[1] - op.p[n - 1]);
+      if (d >= minStep) {
+        op.p.push(at[0], at[1]);
+        moved += d;
+      }
     }
+    const dt = Math.max(8, e.timeStamp - drag.lastT);
+    drag.lastT = e.timeStamp;
+    sound.carveMove((moved / dt) * 300, inputRef.current.tool);
     engine.setLive([op]);
   };
 
@@ -162,21 +143,14 @@ export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mi
     const engine = engineRef.current;
     if (!drag || e.pointerId !== drag.id || !engine) return;
     dragRef.current = null;
-    const op = drag.op;
+    sound.carveEnd();
     if (!commit) {
       engine.setLive([]);
-      engine.setPreview(null);
       return;
     }
-    if (op.t === "stamp") {
-      inputRef.current.onCommit(op);
-      if (e.pointerType !== "mouse") engine.setPreview(null);
-      navigator.vibrate?.(12);
-    } else {
-      const done: StrokeOp = { ...op, p: quantize(simplify(op.p, op.w * 0.04)) };
-      engine.setLive([done]);
-      inputRef.current.onCommit(done);
-    }
+    const done: StrokeOp = { ...drag.op, p: quantize(simplify(drag.op.p, drag.op.w * 0.04)) };
+    engine.setLive([done]);
+    inputRef.current.onCommit(done);
   };
 
   return (
@@ -190,9 +164,6 @@ export function PumpkinCanvas({ settings, ready, ops, lit, dark, tool, stamp, mi
         onPointerMove={onPointerMove}
         onPointerUp={(e) => finish(e, true)}
         onPointerCancel={(e) => finish(e, false)}
-        onPointerLeave={(e) => {
-          if (!dragRef.current && e.pointerType === "mouse") engineRef.current?.setPreview(null);
-        }}
       />
     </div>
   );

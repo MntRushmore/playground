@@ -10,23 +10,29 @@ import { STEADY, createFlicker } from "./flicker";
 import { drawFrame } from "./frame";
 import { buildDerived, createLayers, type Layers, paintCommitted, paintLive, type Region } from "./layers";
 import { createPumpkinRenderer, type PlateParams } from "./pumpkin-render";
+import { buildSet } from "./set-builder";
+import { createSetRenderer } from "./set-render";
 import { type PlateRect, faceTransform, plateRect, screenToFace, strokeBoxes } from "./space";
+import { createStudio } from "./studio";
 import { visibleOps } from "./carving";
-import type { FrameState, Op, PumpkinPlates, Settings, StampOp, StrokeOp, ThemeColors } from "./types";
+import type { FrameState, Op, PaintOp, PumpkinPlates, SetLayers, Settings, StrokeOp, ThemeColors } from "./types";
 
-type Live = (StrokeOp | StampOp)[];
+type Live = PaintOp[];
+/** The set is mostly out of focus: render it at CSS-pixel resolution at most. */
+const MAX_SET_PX = 1400;
 
 const bodyKey = (s: Settings) => JSON.stringify([s.shape, s.variety, s.hue, s.ribs, s.ribDepth, s.seed]);
 
 export function createEngine(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d")!;
-  const renderer = createPumpkinRenderer();
+  const studio = createStudio();
+  const renderer = studio ? createPumpkinRenderer(studio) : null;
+  const setRenderer = studio ? createSetRenderer(studio) : null;
   const flicker = createFlicker(7);
 
   let settings: Settings | null = null;
   let ops: Live = [];
   let live: Live = [];
-  let preview: StampOp | null = null;
   let theme: ThemeColors = { background: "#000", foreground: "#fff", night: "#000", dark: true };
   let reduced = false;
   let target = { lit: true, dark: true };
@@ -41,8 +47,11 @@ export function createEngine(canvas: HTMLCanvasElement) {
   let plates: PumpkinPlates | null = null;
   let layers: Layers | null = null;
   let cavity: { dark: HTMLCanvasElement; lit: HTMLCanvasElement } | null = null;
+  let set: SetLayers | null = null;
+  /** The plate rect the set was rendered for (it's redrawn scaled when the view shrinks). */
+  let setRect: PlateRect = rect;
   let lastBodyKey = "";
-  const dirty = { plates: true, committed: true, live: true, cavity: true };
+  const dirty = { plates: true, committed: true, live: true, cavity: true, set: true };
   /** Plate-px boxes touched by the stroke in progress since the last rebuild (null: all). */
   let liveRegion: NonNullable<Region> | null = null;
   let liveOp: StrokeOp | null = null;
@@ -78,6 +87,12 @@ export function createEngine(canvas: HTMLCanvasElement) {
       plates = renderPlates(s, size, plates ?? undefined);
       dirty.plates = false;
       dirty.committed = true;
+    } else if (dirty.set) {
+      // A separate frame from the hero render, so neither stall is doubled.
+      const scale = Math.min(1 / dpr, MAX_SET_PX / Math.max(canvas.width, canvas.height));
+      set = buildSet(setRenderer, s.shape, canvas.width, canvas.height, rect, scale, s.seed);
+      setRect = rect;
+      dirty.set = false;
     }
     const glow = glowPalette(s.warmth);
     if (dirty.committed) {
@@ -114,8 +129,9 @@ export function createEngine(canvas: HTMLCanvasElement) {
     layoutView();
     anim.dark = ease(anim.dark, target.dark ? 1 : 0, 0.28);
     anim.flame = ease(anim.flame, target.lit ? 1 : 0, target.lit ? 0.4 : 0.18);
-    if (plates) anim.appear = reduced ? 1 : Math.min(1, anim.appear + dt / 0.35);
-    if (plates) snapAnim = false;
+    const ready = plates && (set || !setRenderer);
+    if (ready) anim.appear = reduced ? 1 : Math.min(1, anim.appear + dt / 0.4);
+    if (ready) snapAnim = false;
   }
 
   function draw(now: number) {
@@ -128,10 +144,11 @@ export function createEngine(canvas: HTMLCanvasElement) {
       return;
     }
     const f = reduced ? STEADY : flicker(now / 1000, s.flicker);
-    const state: FrameState = { dark: anim.dark, flame: anim.flame, ...f };
+    const state: FrameState = { dark: anim.dark, flame: anim.flame, ...f, time: reduced ? 0 : now / 1000, moving: !reduced };
     drawFrame(ctx, {
       layers,
       plates,
+      set: set && { ...set, rect: setRect, view },
       cavityDark: cavity.dark,
       cavityLit: cavity.lit,
       ft: faceTransform(s.shape, rect.size),
@@ -141,8 +158,6 @@ export function createEngine(canvas: HTMLCanvasElement) {
       glowAmount: s.glow,
       state,
       appear: anim.appear,
-      preview,
-      dpr,
     });
   }
 
@@ -175,7 +190,7 @@ export function createEngine(canvas: HTMLCanvasElement) {
         lastBodyKey = key;
         dirty.plates = true;
       }
-      if (prev && prev.shape !== next.shape) dirty.committed = true;
+      if (prev && prev.shape !== next.shape) dirty.committed = dirty.set = true;
       if (!prev || prev.warmth !== next.warmth || prev.seed !== next.seed || prev.shape !== next.shape) {
         dirty.cavity = true;
         dirty.live = true;
@@ -206,10 +221,6 @@ export function createEngine(canvas: HTMLCanvasElement) {
       dirty.live = true;
       schedule();
     },
-    setPreview(next: StampOp | null) {
-      preview = next;
-      schedule();
-    },
     setTarget(next: { lit: boolean; dark: boolean }) {
       target = next;
       schedule();
@@ -227,6 +238,7 @@ export function createEngine(canvas: HTMLCanvasElement) {
       canvas.width = Math.max(1, Math.round(width * ratio));
       canvas.height = Math.max(1, Math.round(height * ratio));
       rect = plateRect(canvas.width, canvas.height, ratio, MAX_PLATE_PX);
+      dirty.set = true;
       layoutView();
       schedule();
     },
@@ -243,13 +255,19 @@ export function createEngine(canvas: HTMLCanvasElement) {
     async exportPng(): Promise<Blob | null> {
       if (!settings) return null;
       // Separate plates at export size; the live ones are untouched.
-      const exportPlates = renderPlates(settings, EXPORT_PLATE_PX);
-      return renderPng(exportPlates, settings, ops, theme, { dark: anim.dark, flame: anim.flame });
+      const size = EXPORT_PLATE_PX;
+      const exportPlates = renderPlates(settings, size);
+      // Square frame, pumpkin a little smaller than full-bleed so the table shows.
+      const r = { x: size * 0.09, y: size * 0.06, size: size * 0.82 };
+      const exportSet = buildSet(setRenderer, settings.shape, size, size, r, 0.6, settings.seed);
+      return renderPng(exportPlates, exportSet, r, settings, ops, theme, { dark: anim.dark, flame: anim.flame });
     },
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
       renderer?.dispose();
+      setRenderer?.dispose();
+      studio?.dispose();
     },
   };
 }

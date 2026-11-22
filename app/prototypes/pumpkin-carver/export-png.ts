@@ -6,8 +6,8 @@ import { glowPalette, skinPalette } from "./color";
 import { STEADY } from "./flicker";
 import { drawFrame } from "./frame";
 import { buildDerived, createLayers, paintCommitted, paintLive } from "./layers";
-import { faceTransform } from "./space";
-import type { PumpkinPlates, Settings, StampOp, StrokeOp, ThemeColors } from "./types";
+import { type PlateRect, faceTransform } from "./space";
+import type { PaintOp, PumpkinPlates, SetLayers, Settings, ThemeColors } from "./types";
 
 export const canvas2d = (size: number) => {
   const c = document.createElement("canvas");
@@ -15,10 +15,13 @@ export const canvas2d = (size: number) => {
   return c;
 };
 
+/** `rect` is where the pumpkin plate sits inside the square export frame. */
 export function renderPng(
   plates: PumpkinPlates,
+  set: SetLayers | null,
+  rect: PlateRect,
   settings: Settings,
-  ops: readonly (StrokeOp | StampOp)[],
+  ops: readonly PaintOp[],
   theme: ThemeColors,
   scene: { dark: number; flame: number }
 ): Promise<Blob | null> {
@@ -37,18 +40,17 @@ export function renderPng(
   drawFrame(out.getContext("2d")!, {
     layers,
     plates,
+    set: set && { ...set, rect, view: rect },
     cavityDark,
     cavityLit,
     ft,
     glow,
-    rect: { x: 0, y: 0, size },
+    rect,
     theme,
     glowAmount: settings.glow,
-    // A steady, fully bright flame reads best in a still.
-    state: { ...scene, ...STEADY, intensity: 1 },
+    // A steady, fully bright flame reads best in a still; motes frozen, grain fixed.
+    state: { ...scene, ...STEADY, intensity: 1, time: 2.5, moving: false },
     appear: 1,
-    preview: null,
-    dpr: 1,
   });
   return new Promise((resolve) => out.toBlob(resolve, "image/png"));
 }

@@ -1,12 +1,12 @@
-// Renders the pumpkin body and stem with three.js into plain 2D canvases ("plates"),
-// once per settings change, in a day and a night lighting rig. The 2D compositor then
-// carves, lights and animates on top of these, so nothing here runs per frame.
+// Renders the hero pumpkin (body + stem) into plain 2D canvases ("plates") once per
+// settings change, under three lighting rigs: room lights on, moonlit night, and the
+// candle's own warm glow. The 2D compositor carves, lights and animates on top.
 
 import * as THREE from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { ELEVATION, PLATE } from "./data";
-import { type BodyParams, type MeshData, buildBody, buildStem } from "./geometry";
-import { mulberry32 } from "./noise";
+import { type BodyParams, buildBody, buildStem } from "./geometry";
+import { type Studio, texture, toGeometry } from "./studio";
+import { skinMaps } from "./skin-textures";
 import type { PumpkinPlates } from "./types";
 
 export type PlateParams = BodyParams & { size: number };
@@ -22,142 +22,73 @@ export function makePlateCanvases(size: number): PumpkinPlates {
     c.width = c.height = size;
     return c;
   };
-  return { size, bodyDay: make(), bodyNight: make(), stemDay: make(), stemNight: make() };
+  return { size, bodyDay: make(), bodyNight: make(), bodyGlow: make(), stemDay: make(), stemNight: make() };
 }
 
-function toGeometry(mesh: MeshData) {
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-  // Vertex colors arrive in sRGB; three expects linear.
-  const lin = new Float32Array(mesh.colors.length);
-  const c = new THREE.Color();
-  for (let i = 0; i < lin.length; i += 3) {
-    c.setRGB(mesh.colors[i], mesh.colors[i + 1], mesh.colors[i + 2], THREE.SRGBColorSpace);
-    lin[i] = c.r;
-    lin[i + 1] = c.g;
-    lin[i + 2] = c.b;
-  }
-  g.setAttribute("color", new THREE.BufferAttribute(lin, 3));
-  g.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
-  g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-  g.computeVertexNormals();
-  return g;
+type Mode = "day" | "night" | "glow";
+
+function dir(color: number, intensity: number, x: number, y: number, z: number) {
+  const l = new THREE.DirectionalLight(color, intensity);
+  l.position.set(x, y, z);
+  return l;
 }
 
-/** Fine skin detail: pale speckles, tiny pits and vertical striations. */
-function skinTexture() {
-  const w = 1024;
-  const h = 512;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d")!;
-  const rand = mulberry32(4242);
-  ctx.fillStyle = "rgb(236,236,236)";
-  ctx.fillRect(0, 0, w, h);
-  for (let i = 0; i < 900; i++) {
-    const x = rand() * w;
-    ctx.strokeStyle = rand() < 0.5 ? "rgba(255,255,255,0.35)" : "rgba(170,170,170,0.22)";
-    ctx.lineWidth = 0.6 + rand() * 1.4;
-    ctx.beginPath();
-    const y0 = rand() * h;
-    ctx.moveTo(x, y0);
-    ctx.lineTo(x + (rand() - 0.5) * 3, y0 + 20 + rand() * 120);
-    ctx.stroke();
-  }
-  for (let i = 0; i < 1800; i++) {
-    const light = rand() < 0.8;
-    ctx.fillStyle = light ? "rgba(255,255,255,0.6)" : "rgba(190,190,190,0.35)";
-    ctx.beginPath();
-    ctx.ellipse(rand() * w, rand() * h, 0.4 + rand() * 0.8, 0.5 + rand() * 1.1, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  return tex;
-}
-
-function rig(day: boolean) {
+/** Same light count and types in every rig, so materials compile once. */
+function rig(mode: Mode) {
   const g = new THREE.Group();
-  if (day) {
-    g.add(new THREE.HemisphereLight(0xfff4e6, 0x3a2716, 0.55));
-    const key = new THREE.DirectionalLight(0xfff0dc, 2.3);
-    key.position.set(-2.4, 3, 3.2);
-    const fill = new THREE.DirectionalLight(0xffe2c4, 0.35);
-    fill.position.set(3, 0.4, 2);
-    const rim = new THREE.DirectionalLight(0xffffff, 1.2);
-    rim.position.set(1.5, 2.2, -3);
-    g.add(key, fill, rim);
+  if (mode === "day") {
+    g.add(new THREE.HemisphereLight(0xffe6cc, 0x24160c, 0.5));
+    g.add(dir(0xffe0bc, 2.2, -2.5, 2.6, 3), dir(0xbcd0ff, 1.5, 2.2, 1.8, -3), dir(0xffb070, 0.35, 2.5, -0.5, 2.5));
+  } else if (mode === "night") {
+    g.add(new THREE.HemisphereLight(0x34446e, 0x080504, 0.14));
+    g.add(dir(0xaabcff, 1.5, -2.2, 2.8, 2.2), dir(0x8090d0, 0.7, 2.6, 1, -2.5), dir(0xff8a3a, 0.12, 0, -2, 3));
   } else {
-    g.add(new THREE.HemisphereLight(0x51608f, 0x140a04, 0.1));
-    const moon = new THREE.DirectionalLight(0x9db2ff, 1.1);
-    moon.position.set(-3, 2.4, -2.2);
-    const spill = new THREE.DirectionalLight(0xff9440, 0.24);
-    spill.position.set(0.3, -2.2, 3);
-    const top = new THREE.DirectionalLight(0x8090c0, 0.12);
-    top.position.set(0.5, 3, 1);
-    g.add(moon, spill, top);
+    g.add(new THREE.HemisphereLight(0x5a3a20, 0x0a0503, 0.18));
+    g.add(dir(0xff9a44, 2.4, 0, -0.2, 4), dir(0x8090d0, 0.45, -2.6, 1.5, -2.5), dir(0xffb060, 0.5, 0.4, 2.5, 2));
   }
+  g.visible = false;
   return g;
 }
 
-export function createPumpkinRenderer(): PumpkinRenderer | null {
-  let renderer: THREE.WebGLRenderer;
-  try {
-    renderer = new THREE.WebGLRenderer({
-      canvas: document.createElement("canvas"),
-      alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: true,
-      premultipliedAlpha: true,
-    });
-  } catch {
-    return null;
-  }
-  renderer.setPixelRatio(1);
-  renderer.setClearColor(0x000000, 0);
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1;
-
+export function createPumpkinRenderer(studio: Studio): PumpkinRenderer {
   const scene = new THREE.Scene();
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  // A small environment is plenty for soft reflections and much cheaper to prefilter.
-  const env = pmrem.fromScene(new RoomEnvironment(), 0.04, 0.1, 100, { size: 64 }).texture;
-  scene.environment = env;
+  scene.environment = studio.env;
 
   const { E, OY } = PLATE;
   const camera = new THREE.OrthographicCamera(-E, E, E + OY, -E + OY, 0.1, 40);
   camera.position.set(0, Math.sin(ELEVATION) * 10, Math.cos(ELEVATION) * 10);
   camera.lookAt(0, 0, 0);
 
-  const dayRig = rig(true);
-  const nightRig = rig(false);
-  scene.add(dayRig, nightRig);
+  const rigs: Record<Mode, THREE.Group> = { day: rig("day"), night: rig("night"), glow: rig("glow") };
+  scene.add(rigs.day, rigs.night, rigs.glow);
 
-  const skin = skinTexture();
-  // Standard (not Physical): far cheaper to compile, which matters on slow GPUs.
-  const bodyMat = new THREE.MeshStandardMaterial({
+  const maps = skinMaps();
+  const colorMap = texture(maps.color, true);
+  const normalMap = texture(maps.normal, false);
+  const roughMap = texture(maps.rough, false);
+  // Waxy skin: clearcoat for the tight highlight, sheen for the soft velvet falloff.
+  const bodyMat = new THREE.MeshPhysicalMaterial({
     vertexColors: true,
-    map: skin,
-    bumpMap: skin,
-    bumpScale: 0.5,
-    roughness: 0.4,
+    map: colorMap,
+    normalMap,
+    normalScale: new THREE.Vector2(0.6, 0.6),
+    roughness: 0.55,
+    roughnessMap: roughMap,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.38,
+    sheen: 0.35,
+    sheenRoughness: 0.5,
+    sheenColor: new THREE.Color(0xffc690),
+    emissive: new THREE.Color(0xff5a10),
+    emissiveIntensity: 0,
   });
-  const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+  const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, normalMap, normalScale: new THREE.Vector2(0.6, 0.6) });
   const body = new THREE.Mesh(new THREE.BufferGeometry(), bodyMat);
   const stem = new THREE.Mesh(new THREE.BufferGeometry(), stemMat);
   body.renderOrder = 0;
   stem.renderOrder = 1;
   scene.add(body, stem);
   let geoKey = "";
-
-  const copy = (dst: HTMLCanvasElement) => {
-    const ctx = dst.getContext("2d")!;
-    ctx.clearRect(0, 0, dst.width, dst.height);
-    ctx.drawImage(renderer.domElement, 0, 0, dst.width, dst.height);
-  };
 
   return {
     render(params, into) {
@@ -170,23 +101,25 @@ export function createPumpkinRenderer(): PumpkinRenderer | null {
         body.geometry = toGeometry(buildBody(params));
         stem.geometry = toGeometry(buildStem(params.shape, params.seed));
       }
-      renderer.setSize(params.size, params.size, false);
-
-      for (const day of [true, false]) {
-        dayRig.visible = day;
-        nightRig.visible = !day;
-        scene.environmentIntensity = day ? 0.3 : 0.015;
-
+      const size = params.size;
+      for (const mode of ["night", "glow", "day"] as Mode[]) {
+        for (const m of Object.keys(rigs) as Mode[]) rigs[m].visible = m === mode;
+        scene.environmentIntensity = mode === "day" ? 0.32 : mode === "night" ? 0.05 : 0.08;
+        bodyMat.emissiveIntensity = mode === "glow" ? 0.07 : 0;
+        // Candle glow is scattered light: no glossy streaks on the ribs.
+        // (Kept above zero so the shader variant, and its compile, is shared.)
+        bodyMat.clearcoat = mode === "glow" ? 0.001 : 0.35;
+        bodyMat.roughness = mode === "glow" ? 0.85 : 0.55;
+        bodyMat.sheen = mode === "glow" ? 0.6 : 0.35;
         stem.visible = false;
-        renderer.render(scene, camera);
-        copy(day ? plates.bodyDay : plates.bodyNight);
-
+        const bodyDst = mode === "day" ? plates.bodyDay : mode === "night" ? plates.bodyNight : plates.bodyGlow;
+        studio.shoot(scene, camera, bodyDst, size, size);
+        if (mode === "glow") continue;
         // Stem alone, with the body only occluding (depth, no color).
         stem.visible = true;
         bodyMat.colorWrite = false;
-        renderer.render(scene, camera);
+        studio.shoot(scene, camera, mode === "day" ? plates.stemDay : plates.stemNight, size, size);
         bodyMat.colorWrite = true;
-        copy(day ? plates.stemDay : plates.stemNight);
       }
       return plates;
     },
@@ -195,11 +128,9 @@ export function createPumpkinRenderer(): PumpkinRenderer | null {
       stem.geometry.dispose();
       bodyMat.dispose();
       stemMat.dispose();
-      skin.dispose();
-      env.dispose();
-      pmrem.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
+      colorMap.dispose();
+      normalMap.dispose();
+      roughMap.dispose();
     },
   };
 }

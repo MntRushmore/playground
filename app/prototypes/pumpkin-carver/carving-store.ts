@@ -6,12 +6,12 @@ import { readStorage, writeStorage } from "@/lib/storage";
 import { DEFAULT_OPS, SLUG } from "./data";
 import { visibleOps } from "./carving";
 import { loadOps, saveOps } from "./persist";
-import type { Op } from "./types";
+import type { FaceId, Op } from "./types";
 
-export type ScenePrefs = { lit: boolean; dark: boolean; mirror: boolean };
+export type ScenePrefs = { lit: boolean; dark: boolean; sound: boolean };
 export type CarvingState = { ops: readonly Op[]; prefs: ScenePrefs };
 
-const DEFAULT_PREFS: ScenePrefs = { lit: true, dark: true, mirror: false };
+const DEFAULT_PREFS: ScenePrefs = { lit: true, dark: true, sound: false };
 const SERVER_STATE: CarvingState = { ops: DEFAULT_OPS, prefs: DEFAULT_PREFS };
 
 let state: CarvingState | null = null;
@@ -56,6 +56,11 @@ export const carving = {
   undo() {
     const s = current();
     if (s.ops.length) set({ ...s, ops: s.ops.slice(0, -1) });
+  },
+  /** A face preset replaces the carving (undo brings the old one back). */
+  applyFace(f: FaceId) {
+    const s = current();
+    set({ ...s, ops: [...s.ops, { t: "face", f }] });
   },
   /** Clearing is an op, so it can be undone. */
   clear() {

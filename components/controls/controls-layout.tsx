@@ -32,7 +32,9 @@ export function ControlsLayout({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className={cn("relative flex min-h-0 flex-1", className)}>
+    // Fill the area below the 56px prototype header and bound our own height, so a tall
+    // control panel scrolls inside the side column instead of stretching the page.
+    <div className={cn("relative flex h-[calc(100dvh-3.5rem)] min-h-0", className)}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
 
       <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-border p-4 md:block">

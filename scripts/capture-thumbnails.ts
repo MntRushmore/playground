@@ -58,6 +58,17 @@ function hasFfmpeg() {
   return spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
 }
 
+/** Downscale a 2× PNG to a crisp JPEG at the target size (Lanczos). Removes the source PNG. */
+function encodeThumb(src: string, dest: string, width: number, height: number) {
+  const r = spawnSync(
+    "ffmpeg",
+    ["-y", "-loglevel", "error", "-i", src, "-vf", `scale=${width}:${height}:flags=lanczos`, "-q:v", "2", dest],
+    { stdio: "inherit" }
+  );
+  fs.rmSync(src, { force: true });
+  if (r.status !== 0) throw new Error(`ffmpeg failed encoding ${dest}`);
+}
+
 async function waitForServer(url: string, timeoutMs = 60_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -90,6 +101,7 @@ async function main() {
 
   // Remove OG media for prototypes that are no longer public: /og/* is served without auth.
   for (const file of fs.existsSync(OG) ? fs.readdirSync(OG) : []) {
+    if (file.startsWith(".") || !/\.(png|mp4)$/.test(file)) continue; // keep .gitkeep and other files
     const slug = file.replace(/\.(png|mp4)$/, "");
     if (!all.some((p) => p.slug === slug && p.public)) {
       fs.rmSync(path.join(OG, file));
@@ -150,22 +162,43 @@ async function main() {
 
     for (const t of targets) {
       for (const theme of ["light", "dark"] as const) {
-        // 1280×800 CSS px rendered at 0.5× → a 640×400 image.
+        // 1280×800 CSS px at 2× DPR → 2560×1600, downscaled to a crisp 1280×800 JPEG
+        // (with ffmpeg) or saved at full 2× resolution as a fallback.
         const { context, page } = await open(`/prototypes/${t.slug}`, theme, {
           viewport: { width: 1280, height: 800 },
-          deviceScaleFactor: 0.5,
+          deviceScaleFactor: 2,
         });
         const file = path.join(THUMBS, `${t.slug}-${theme}.jpg`);
-        await page.screenshot({ path: file, type: "jpeg", quality: 82 });
+        if (ffmpeg) {
+          const raw = path.join(TMP, `${t.slug}-${theme}.png`);
+          await page.screenshot({ path: raw, type: "png" });
+          encodeThumb(raw, file, 1280, 800);
+        } else {
+          await page.screenshot({ path: file, type: "jpeg", quality: 90 });
+        }
         await context.close();
         console.log(`✓ thumbnails/${t.slug}-${theme}.jpg`);
       }
 
       if (t.public && args.og) {
+        const ogPng = path.join(OG, `${t.slug}.png`);
         const { context, page } = await open(`/p/${t.slug}`, "dark", {
           viewport: { width: 1200, height: 630 },
+          deviceScaleFactor: 2,
         });
-        await page.screenshot({ path: path.join(OG, `${t.slug}.png`), type: "png" });
+        if (ffmpeg) {
+          const raw = path.join(TMP, `${t.slug}-og.png`);
+          await page.screenshot({ path: raw, type: "png" });
+          const r = spawnSync(
+            "ffmpeg",
+            ["-y", "-loglevel", "error", "-i", raw, "-vf", "scale=1200:630:flags=lanczos", ogPng],
+            { stdio: "inherit" }
+          );
+          fs.rmSync(raw, { force: true });
+          if (r.status !== 0) throw new Error("ffmpeg failed encoding OG png");
+        } else {
+          await page.screenshot({ path: ogPng, type: "png" });
+        }
         await context.close();
         console.log(`✓ og/${t.slug}.png`);
 

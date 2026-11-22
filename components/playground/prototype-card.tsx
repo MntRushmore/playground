@@ -19,16 +19,16 @@ export function PrototypeCard({ prototype: p }: { prototype: PrototypeSummary })
             <Image
               src={p.thumbnail.light}
               alt=""
-              width={640}
-              height={400}
+              width={1280}
+              height={800}
               unoptimized
               className="size-full object-cover dark:hidden"
             />
             <Image
               src={p.thumbnail.dark}
               alt=""
-              width={640}
-              height={400}
+              width={1280}
+              height={800}
               unoptimized
               className="hidden size-full object-cover dark:block"
             />

@@ -49,3 +49,6 @@ next-env.d.ts
 /.thumbs-tmp/
 
 !.env.example
+
+# agent worktrees and local claude state
+/.claude/

@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Playground
 
-## Getting Started
+A personal prototype playground: one Next.js app holding many small, self-contained prototypes. New prototypes are made by asking a coding agent; every rule it follows is in [`CLAUDE.md`](./CLAUDE.md).
 
-First, run the development server:
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm exec playwright install chromium   # for thumbnails
+pnpm dev                                # http://localhost:3000 (no password in dev)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`ffmpeg` is needed for og:video capture (`brew install ffmpeg`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy (Vercel)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push to GitHub and import the repo in Vercel (framework: Next.js, defaults are fine).
+2. Set `PLAYGROUND_PASSWORD` for **Production and Preview** (`vercel env add PLAYGROUND_PASSWORD`).
+   Without it, the site stays locked. That's deliberate.
+3. Optional: `NEXT_PUBLIC_SITE_URL=https://your-domain` so OG links use your custom domain.
+4. Every PR gets a preview deployment. Open it from your phone.
 
-## Learn More
+Tip: Vercel's own Deployment Protection also gates previews. Either keep it (double gate) or turn it off for previews so the playground password is the only gate.
 
-To learn more about Next.js, take a look at the following resources:
+## Making a prototype
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Ask your agent, e.g. *"Make a prototype of a fullscreen purple piano for kids with big keys."* It follows `CLAUDE.md`: new folder in `app/prototypes/<slug>/`, metadata, docs, thumbnails, PR, preview link.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Making one public
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Ask explicitly: *"Make flow-field public."* It gets a password-free URL at `/p/<slug>` with an OG image and video.

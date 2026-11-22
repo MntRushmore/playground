@@ -1,3 +1,7 @@
+# Agents: read CLAUDE.md first
+
+All rules for this repo (creating prototypes, design system, mobile, theming, privacy, workflow) live in [`CLAUDE.md`](./CLAUDE.md). Read it in full before doing anything.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know
